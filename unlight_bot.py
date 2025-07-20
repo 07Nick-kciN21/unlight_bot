@@ -1,490 +1,334 @@
+# =============================================================================
+# Unlight Bot 調試輔助工具
+# =============================================================================
+
 import cv2
 import numpy as np
 import pyautogui
-import time
-from dataclasses import dataclass
-from typing import List, Dict, Tuple, Optional
-from enum import Enum
+import json
+from pathlib import Path
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from PIL import Image, ImageTk
 
-class CardSymbol(Enum):
-    MOVE = "移動"
-    SHIELD = "盾牌"
-    SWORD = "劍"
-    GUN = "槍"
-    SPECIAL = "特殊"
-
-class GamePhase(Enum):
-    DEAL = "發牌"
-    MOVE = "移動"
-    ATTACK = "攻擊"
-    DEFEND = "防守"
-
-@dataclass
-class Card:
-    """卡牌資訊 - 類似撲克牌結構"""
-    position: Tuple[int, int]  # 卡牌在畫面上的位置
-    center_position: Tuple[int, int]  # 中央切換區域位置
-    top_symbol: CardSymbol
-    top_value: int
-    bottom_symbol: CardSymbol
-    bottom_value: int
-    current_side: str = "top"  # "top" 或 "bottom"
+class CoordinateHelper:
+    """座標調整輔助工具"""
     
-    def get_current_symbol(self) -> CardSymbol:
-        return self.top_symbol if self.current_side == "top" else self.bottom_symbol
-    
-    def get_current_value(self) -> int:
-        return self.top_value if self.current_side == "top" else self.bottom_value
-
-class UnlightBot:
     def __init__(self):
-        self.cards: List[Card] = []
-        self.current_phase = GamePhase.DEAL
-        self.screen_width, self.screen_height = pyautogui.size()
-        self.phase_requirements = {}  # 階段需求配置
+        self.root = tk.Tk()
+        self.root.title("Unlight Bot 座標調整工具")
+        self.root.geometry("500x400")
         
-        # 設定安全機制
-        pyautogui.FAILSAFE = True
-        pyautogui.PAUSE = 0.1
+        self.current_pos = (0, 0)
+        self.setup_ui()
         
-        # 預設的卡牌區域（需要根據實際遊戲調整）
-        self.hand_area = (100, 600, 800, 150)  # (x, y, width, height)
+    def setup_ui(self):
+        # 當前座標顯示
+        self.pos_label = tk.Label(self.root, text="當前座標: (0, 0)", font=("Arial", 12))
+        self.pos_label.pack(pady=10)
         
-        # 載入階段需求配置
-        self.load_phase_requirements()
+        # 更新座標按鈕
+        tk.Button(self.root, text="獲取滑鼠座標", command=self.update_position).pack(pady=5)
+        
+        # 手牌區域設定
+        frame1 = tk.Frame(self.root)
+        frame1.pack(pady=10)
+        
+        tk.Label(frame1, text="手牌區域設定:").pack()
+        
+        # 座標輸入框
+        coord_frame = tk.Frame(frame1)
+        coord_frame.pack()
+        
+        tk.Label(coord_frame, text="X:").grid(row=0, column=0)
+        self.x_entry = tk.Entry(coord_frame, width=8)
+        self.x_entry.grid(row=0, column=1)
+        self.x_entry.insert(0, "100")
+        
+        tk.Label(coord_frame, text="Y:").grid(row=0, column=2)
+        self.y_entry = tk.Entry(coord_frame, width=8)
+        self.y_entry.grid(row=0, column=3)
+        self.y_entry.insert(0, "600")
+        
+        tk.Label(coord_frame, text="寬:").grid(row=1, column=0)
+        self.w_entry = tk.Entry(coord_frame, width=8)
+        self.w_entry.grid(row=1, column=1)
+        self.w_entry.insert(0, "800")
+        
+        tk.Label(coord_frame, text="高:").grid(row=1, column=2)
+        self.h_entry = tk.Entry(coord_frame, width=8)
+        self.h_entry.grid(row=1, column=3)
+        self.h_entry.insert(0, "150")
+        
+        # 測試按鈕
+        tk.Button(frame1, text="測試手牌區域", command=self.test_hand_area).pack(pady=5)
+        tk.Button(frame1, text="保存設定", command=self.save_settings).pack(pady=5)
+        
+        # 卡牌尺寸設定
+        frame2 = tk.Frame(self.root)
+        frame2.pack(pady=10)
+        
+        tk.Label(frame2, text="卡牌尺寸設定:").pack()
+        
+        size_frame = tk.Frame(frame2)
+        size_frame.pack()
+        
+        tk.Label(size_frame, text="卡牌寬:").grid(row=0, column=0)
+        self.card_w_entry = tk.Entry(size_frame, width=8)
+        self.card_w_entry.grid(row=0, column=1)
+        self.card_w_entry.insert(0, "80")
+        
+        tk.Label(size_frame, text="卡牌高:").grid(row=0, column=2)
+        self.card_h_entry = tk.Entry(size_frame, width=8)
+        self.card_h_entry.grid(row=0, column=3)
+        self.card_h_entry.insert(0, "120")
+        
+        tk.Label(size_frame, text="間距:").grid(row=1, column=0)
+        self.spacing_entry = tk.Entry(size_frame, width=8)
+        self.spacing_entry.grid(row=1, column=1)
+        self.spacing_entry.insert(0, "90")
+        
+        # 自動更新座標
+        self.auto_update()
+        
+    def auto_update(self):
+        """自動更新滑鼠座標"""
+        pos = pyautogui.position()
+        self.pos_label.config(text=f"當前座標: ({pos.x}, {pos.y})")
+        self.root.after(100, self.auto_update)
     
-    def capture_screen(self) -> np.ndarray:
-        """截取螢幕畫面"""
-        screenshot = pyautogui.screenshot()
-        return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+    def update_position(self):
+        """手動更新座標到輸入框"""
+        pos = pyautogui.position()
+        self.x_entry.delete(0, tk.END)
+        self.x_entry.insert(0, str(pos.x))
+        self.y_entry.delete(0, tk.END)
+        self.y_entry.insert(0, str(pos.y))
     
-    def detect_game_phase(self, image: np.ndarray) -> GamePhase:
-        """檢測當前遊戲階段"""
-        # 這裡需要根據遊戲UI的特徵來判斷階段
-        # 例如：檢測特定的階段指示器顏色或文字
-        
-        # 示例：檢測階段指示器（需要根據實際遊戲調整）
-        phase_areas = {
-            GamePhase.DEAL: (50, 50, 100, 30),
-            GamePhase.MOVE: (150, 50, 100, 30),
-            GamePhase.ATTACK: (250, 50, 100, 30),
-            GamePhase.DEFEND: (350, 50, 100, 30)
-        }
-        
-        # 簡化示例，實際需要圖像識別
-        return GamePhase.MOVE  # 預設返回移動階段
-    
-    def detect_card_symbol(self, card_image: np.ndarray) -> Tuple[CardSymbol, int]:
-        """識別卡牌符號和數值"""
-        # 這裡需要實現圖像識別邏輯
-        # 可以使用模板匹配或者訓練的機器學習模型
-        
-        # 示例：使用模板匹配識別符號
-        symbols = {
-            CardSymbol.MOVE: "move_template.png",
-            CardSymbol.SHIELD: "shield_template.png",
-            CardSymbol.SWORD: "sword_template.png",
-            CardSymbol.GUN: "gun_template.png",
-            CardSymbol.SPECIAL: "special_template.png"
-        }
-        
-        best_match = CardSymbol.MOVE
-        best_score = 0
-        
-        for symbol, template_path in symbols.items():
-            try:
-                # 載入模板（需要預先準備符號的模板圖片）
-                template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-                if template is not None:
-                    card_gray = cv2.cvtColor(card_image, cv2.COLOR_BGR2GRAY)
-                    result = cv2.matchTemplate(card_gray, template, cv2.TM_CCOEFF_NORMED)
-                    _, max_val, _, _ = cv2.minMaxLoc(result)
-                    
-                    if max_val > best_score:
-                        best_score = max_val
-                        best_match = symbol
-            except:
-                continue
-        
-        # 識別數值（需要OCR或者數字模板匹配）
-        value = self.extract_card_value(card_image)
-        
-        return best_match, value
-    
-    def extract_card_value(self, card_image: np.ndarray) -> int:
-        """提取卡牌數值"""
-        # 這裡可以使用OCR或者數字模板匹配
-        # 示例：使用pytesseract進行OCR
+    def test_hand_area(self):
+        """測試手牌區域"""
         try:
-            import pytesseract
-            gray = cv2.cvtColor(card_image, cv2.COLOR_BGR2GRAY)
-            text = pytesseract.image_to_string(gray, config='--psm 8 -c tessedit_char_whitelist=0123456789')
-            return int(text.strip()) if text.strip().isdigit() else 1
-        except:
-            return 1  # 預設值
-    
-    def scan_hand_cards(self) -> List[Card]:
-        """掃描手牌"""
-        image = self.capture_screen()
-        cards = []
-        
-        # 在手牌區域尋找卡牌
-        x, y, w, h = self.hand_area
-        hand_region = image[y:y+h, x:x+w]
-        
-        # 假設卡牌按固定間距排列
-        card_width = 80
-        card_height = 120
-        card_spacing = 90
-        
-        for i in range(6):  # 假設最多6張手牌
-            card_x = x + i * card_spacing
-            card_y = y + 10
+            x = int(self.x_entry.get())
+            y = int(self.y_entry.get())
+            w = int(self.w_entry.get())
+            h = int(self.h_entry.get())
             
-            if card_x + card_width > x + w:
-                break
+            # 截取區域
+            screenshot = pyautogui.screenshot(region=(x, y, w, h))
+            screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
             
-            card_image = image[card_y:card_y+card_height, card_x:card_x+card_width]
+            # 保存測試圖片
+            cv2.imwrite("test_hand_region.png", screenshot_cv)
+            messagebox.showinfo("成功", "手牌區域已保存為 test_hand_region.png")
             
-            # 檢查是否有卡牌（可以通過檢測卡牌邊框或特徵）
-            if self.has_card_at_position(card_image):
-                # 識別卡牌上下兩面（類似撲克牌結構）
-                # 上半部分是正面，下半部分是反面（上下顛倒）
-                card_height_quarter = card_height // 4
-                top_region = card_image[card_height_quarter:card_height//2, :]
-                bottom_region = card_image[card_height//2:card_height-card_height_quarter, :]
-                
-                # 下半部分需要旋轉180度來識別
-                bottom_region_rotated = cv2.rotate(bottom_region, cv2.ROTATE_180)
-                
-                top_symbol, top_value = self.detect_card_symbol(top_region)
-                bottom_symbol, bottom_value = self.detect_card_symbol(bottom_region_rotated)
-                
-                # 計算中央切換區域（卡牌中央小區域）
-                center_x = card_x + card_width // 2
-                center_y = card_y + card_height // 2
-                
-                card = Card(
-                    position=(card_x + card_width//2, card_y + card_height//2),
-                    center_position=(center_x, center_y),
-                    top_symbol=top_symbol,
-                    top_value=top_value,
-                    bottom_symbol=bottom_symbol,
-                    bottom_value=bottom_value
-                )
-                cards.append(card)
-        
-        return cards
+        except ValueError:
+            messagebox.showerror("錯誤", "請輸入有效的數字")
     
-    def has_card_at_position(self, card_image: np.ndarray) -> bool:
-        """檢查指定位置是否有卡牌"""
-        # 簡單的邊緣檢測來判斷是否有卡牌
-        gray = cv2.cvtColor(card_image, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 50, 150)
-        return np.sum(edges) > 1000  # 閾值需要調整
-    
-    def flip_card(self, card: Card):
-        """翻轉卡牌（點擊卡牌中央區域）"""
-        pyautogui.click(card.center_position[0], card.center_position[1])
-        time.sleep(0.3)
-        card.current_side = "bottom" if card.current_side == "top" else "top"
-        print(f"翻轉卡牌到 {card.current_side} 面")
-    
-    def play_card(self, card: Card):
-        """打出卡牌（點擊卡牌非中央區域）"""
-        # 點擊卡牌邊緣區域來出牌，避免中央切換區域
-        offset_x = 25  # 偏移到卡牌邊緣
-        play_x = card.position[0] + offset_x
-        play_y = card.position[1]
-        
-        pyautogui.click(play_x, play_y)
-        time.sleep(0.3)
-        print(f"打出卡牌: {card.get_current_symbol().value} {card.get_current_value()}")
-    
-    def find_optimal_combination(self, target_symbol: CardSymbol, 
-                               target_value: int, 
-                               phase: GamePhase) -> List[Card]:
-        """尋找最佳卡牌組合"""
-        available_cards = []
-        
-        # 根據階段篩選可用卡牌
-        for card in self.cards:
-            current_symbol = card.get_current_symbol()
-            if self.symbol_matches_phase(current_symbol, phase):
-                available_cards.append(card)
-        
-        # 也檢查翻面後的選項
-        for card in self.cards:
-            if card not in available_cards:
-                # 檢查翻面後是否符合條件
-                other_symbol = card.bottom_symbol if card.current_side == "top" else card.top_symbol
-                if self.symbol_matches_phase(other_symbol, phase):
-                    available_cards.append(card)
-        
-        # 動態規劃或貪心算法找最佳組合
-        return self.dp_card_combination(available_cards, target_symbol, target_value)
-    
-    def dp_card_combination(self, cards: List[Card], 
-                          target_symbol: CardSymbol, 
-                          target_value: int) -> List[Card]:
-        """使用動態規劃找最佳卡牌組合"""
-        # 簡化版本：貪心算法
-        suitable_cards = []
-        
-        for card in cards:
-            current_symbol = card.get_current_symbol()
-            if current_symbol != target_symbol:
-                # 需要翻面
-                other_symbol = card.bottom_symbol if card.current_side == "top" else card.top_symbol
-                if other_symbol == target_symbol:
-                    suitable_cards.append((card, True))  # (卡牌, 需要翻面)
-            else:
-                suitable_cards.append((card, False))
-        
-        # 按數值排序，優先選擇高數值卡牌
-        suitable_cards.sort(key=lambda x: x[0].get_current_value() if not x[1] else 
-                          (x[0].bottom_value if x[0].current_side == "top" else x[0].top_value),
-                          reverse=True)
-        
-        selected_cards = []
-        current_sum = 0
-        
-        for card, need_flip in suitable_cards:
-            if need_flip:
-                value = card.bottom_value if card.current_side == "top" else card.top_value
-            else:
-                value = card.get_current_value()
-            
-            if current_sum + value <= target_value:
-                selected_cards.append(card)
-                current_sum += value
-                
-                if current_sum == target_value:
-                    break
-        
-        return selected_cards
-    
-    def symbol_matches_phase(self, symbol: CardSymbol, phase: GamePhase) -> bool:
-        """檢查符號是否符合階段需求"""
-        if phase == GamePhase.MOVE:
-            return symbol == CardSymbol.MOVE
-        elif phase == GamePhase.ATTACK:
-            return symbol in [CardSymbol.SWORD, CardSymbol.GUN, CardSymbol.SPECIAL]
-        elif phase == GamePhase.DEFEND:
-            return symbol in [CardSymbol.SHIELD, CardSymbol.SPECIAL]
-        return False
-    
-    def load_phase_requirements(self):
-        """從txt文件載入階段需求"""
+    def save_settings(self):
+        """保存設定到檔案"""
         try:
-            with open('phase_requirements.txt', 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                
-            current_phase = None
-            for line in lines:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                
-                if line.endswith('：') or line.endswith(':'):
-                    # 階段標題
-                    phase_name = line.rstrip('：:')
-                    if phase_name == "移動":
-                        current_phase = GamePhase.MOVE
-                    elif phase_name == "攻擊":
-                        current_phase = GamePhase.ATTACK
-                    elif phase_name == "防守":
-                        current_phase = GamePhase.DEFEND
-                    
-                    if current_phase:
-                        self.phase_requirements[current_phase] = []
-                
-                elif current_phase and ('移' in line or '劍' in line or '槍' in line or '盾' in line or '特' in line):
-                    # 解析需求，例如：移1 劍3
-                    requirements = self.parse_requirements(line)
-                    self.phase_requirements[current_phase].extend(requirements)
-                    
-        except FileNotFoundError:
-            print("找不到 phase_requirements.txt 文件，將使用預設設定")
-            self.create_default_requirements_file()
-        except Exception as e:
-            print(f"載入階段需求時出錯: {e}")
-            self.create_default_requirements_file()
-    
-    def parse_requirements(self, line: str) -> List[Tuple[CardSymbol, int]]:
-        """解析需求字符串"""
-        requirements = []
-        parts = line.split()
-        
-        for part in parts:
-            if not part:
-                continue
-                
-            symbol = None
-            value = 0
+            settings = {
+                "hand_area": {
+                    "x": int(self.x_entry.get()),
+                    "y": int(self.y_entry.get()),
+                    "width": int(self.w_entry.get()),
+                    "height": int(self.h_entry.get())
+                },
+                "card_settings": {
+                    "width": int(self.card_w_entry.get()),
+                    "height": int(self.card_h_entry.get()),
+                    "spacing": int(self.spacing_entry.get())
+                }
+            }
             
-            if part.startswith('移'):
-                symbol = CardSymbol.MOVE
-                value = int(part[1:]) if len(part) > 1 and part[1:].isdigit() else 1
-            elif part.startswith('劍'):
-                symbol = CardSymbol.SWORD
-                value = int(part[1:]) if len(part) > 1 and part[1:].isdigit() else 1
-            elif part.startswith('槍'):
-                symbol = CardSymbol.GUN
-                value = int(part[1:]) if len(part) > 1 and part[1:].isdigit() else 1
-            elif part.startswith('盾'):
-                symbol = CardSymbol.SHIELD
-                value = int(part[1:]) if len(part) > 1 and part[1:].isdigit() else 1
-            elif part.startswith('特'):
-                symbol = CardSymbol.SPECIAL
-                value = int(part[1:]) if len(part) > 1 and part[1:].isdigit() else 1
+            with open("bot_settings.json", "w", encoding="utf-8") as f:
+                json.dump(settings, f, indent=2, ensure_ascii=False)
             
-            if symbol:
-                requirements.append((symbol, value))
-        
-        return requirements
+            messagebox.showinfo("成功", "設定已保存到 bot_settings.json")
+            
+        except ValueError:
+            messagebox.showerror("錯誤", "請輸入有效的數字")
     
-    def create_default_requirements_file(self):
-        """創建預設的需求配置文件"""
-        default_content = """# Unlight 階段需求配置
-# 格式：階段名稱：
-#       符號+數值 符號+數值
-# 符號：移(移動) 劍(劍) 槍(槍) 盾(盾牌) 特(特殊)
+    def run(self):
+        """運行工具"""
+        self.root.mainloop()
 
-移動：
-移1
-
-攻擊：
-劍3 特3
-
-防守：
-盾4
-"""
-        
-        with open('phase_requirements.txt', 'w', encoding='utf-8') as f:
-            f.write(default_content)
-        
-        print("已創建預設的 phase_requirements.txt 文件")
-        self.load_phase_requirements()
+class TemplateCreator:
+    """模板圖片創建工具"""
     
-    def execute_phase_requirements(self, phase: GamePhase):
-        """執行階段需求"""
-        if phase not in self.phase_requirements:
-            print(f"沒有找到階段 {phase.value} 的需求配置")
-            return
+    def __init__(self):
+        self.templates_dir = Path("templates")
+        self.templates_dir.mkdir(exist_ok=True)
         
-        requirements = self.phase_requirements[phase]
-        print(f"執行階段 {phase.value} 需求: {requirements}")
+    def create_template_from_screenshot(self, symbol_name: str, region: tuple):
+        """從截圖創建模板"""
+        x, y, w, h = region
+        screenshot = pyautogui.screenshot(region=(x, y, w, h))
+        screenshot_cv = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
         
-        for symbol, target_value in requirements:
-            optimal_cards = self.find_optimal_combination(symbol, target_value, phase)
-            
-            if not optimal_cards:
-                print(f"沒有找到符合 {symbol.value} {target_value} 的卡牌組合")
-                continue
-            
-            total_value = 0
-            print(f"找到 {len(optimal_cards)} 張卡牌組合:")
-            
-            # 翻轉需要翻面的卡牌
-            for card in optimal_cards:
-                current_symbol = card.get_current_symbol()
-                if current_symbol != symbol:
-                    print(f"  翻轉卡牌 {card.position} 從 {current_symbol.value} 到 {symbol.value}")
-                    self.flip_card(card)
-                    time.sleep(0.2)
-            
-            # 打出卡牌
-            for card in optimal_cards:
-                current_value = card.get_current_value()
-                total_value += current_value
-                print(f"  打出: {card.get_current_symbol().value} {current_value}")
-                self.play_card(card)
-                time.sleep(0.5)
-            
-            print(f"完成需求: {symbol.value} 總計 {total_value}/{target_value}")
-            time.sleep(1)
+        # 轉換為灰度
+        gray = cv2.cvtColor(screenshot_cv, cv2.COLOR_BGR2GRAY)
+        
+        # 保存模板
+        template_path = self.templates_dir / f"{symbol_name}_template.png"
+        cv2.imwrite(str(template_path), gray)
+        
+        print(f"模板已保存: {template_path}")
+        return template_path
     
-    def execute_turn(self, target_symbol: CardSymbol = None, target_value: int = None):
-        """執行一回合"""
-        # 1. 掃描手牌
-        self.cards = self.scan_hand_cards()
-        print(f"掃描到 {len(self.cards)} 張手牌")
+    def interactive_template_creation(self):
+        """交互式模板創建"""
+        symbols = ["move", "shield", "sword", "gun", "special"]
         
-        # 2. 檢測當前階段
-        image = self.capture_screen()
-        self.current_phase = self.detect_game_phase(image)
-        print(f"當前階段: {self.current_phase.value}")
+        print("=== 模板創建工具 ===")
+        print("將滑鼠移動到要擷取的符號位置，然後按Enter")
         
-        # 3. 如果沒有指定目標，使用配置文件的需求
-        if target_symbol is None or target_value is None:
-            self.execute_phase_requirements(self.current_phase)
-            return
-        
-        # 4. 使用指定的目標
-        optimal_cards = self.find_optimal_combination(target_symbol, target_value, self.current_phase)
-        
-        if not optimal_cards:
-            print("沒有找到合適的卡牌組合")
-            return
-        
-        print(f"找到 {len(optimal_cards)} 張卡牌組合")
-        
-        # 5. 翻轉需要翻面的卡牌
-        for card in optimal_cards:
-            current_symbol = card.get_current_symbol()
-            if current_symbol != target_symbol:
-                print(f"翻轉卡牌 {card.position}")
-                self.flip_card(card)
-        
-        # 6. 打出卡牌
-        for card in optimal_cards:
-            print(f"打出卡牌 {card.position}")
-            self.play_card(card)
-            time.sleep(0.5)
-    
-    def run_auto_play(self):
-        """自動遊戲主循環"""
-        print("開始自動遊戲...")
-        print("階段需求配置:")
-        for phase, requirements in self.phase_requirements.items():
-            print(f"  {phase.value}: {[(r[0].value, r[1]) for r in requirements]}")
-        
-        while True:
+        for symbol in symbols:
+            input(f"準備擷取 {symbol} 符號，按Enter繼續...")
+            
+            # 獲取當前滑鼠位置
+            pos = pyautogui.position()
+            
+            # 擷取小區域 (30x30 像素)
+            region = (pos.x - 15, pos.y - 15, 30, 30)
+            
             try:
-                # 根據配置文件執行每個階段
-                self.execute_turn()
-                time.sleep(2)
-                
-            except KeyboardInterrupt:
-                print("停止自動遊戲")
-                break
+                template_path = self.create_template_from_screenshot(symbol, region)
+                print(f"✅ {symbol} 模板創建完成")
             except Exception as e:
-                print(f"錯誤: {e}")
-                time.sleep(1)
+                print(f"❌ {symbol} 模板創建失敗: {e}")
 
-# 使用示例
+class LogAnalyzer:
+    """日誌分析工具"""
+    
+    def __init__(self):
+        self.logs = []
+    
+    def analyze_scan_results(self, json_file: str = "scanned_cards.json"):
+        """分析掃描結果"""
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                cards_data = json.load(f)
+            
+            print(f"=== 掃描結果分析 ({json_file}) ===")
+            print(f"找到卡牌數量: {len(cards_data)}")
+            
+            # 統計符號分布
+            symbol_count = {}
+            for card in cards_data:
+                top_symbol = card['top_symbol']
+                bottom_symbol = card['bottom_symbol']
+                
+                symbol_count[top_symbol] = symbol_count.get(top_symbol, 0) + 1
+                symbol_count[bottom_symbol] = symbol_count.get(bottom_symbol, 0) + 1
+            
+            print("\n符號統計:")
+            for symbol, count in symbol_count.items():
+                print(f"  {symbol}: {count} 次")
+            
+            # 數值分析
+            values = []
+            for card in cards_data:
+                values.extend([card['top_value'], card['bottom_value']])
+            
+            if values:
+                print(f"\n數值統計:")
+                print(f"  平均值: {sum(values) / len(values):.2f}")
+                print(f"  最大值: {max(values)}")
+                print(f"  最小值: {min(values)}")
+            
+            return cards_data
+            
+        except FileNotFoundError:
+            print(f"找不到檔案: {json_file}")
+            return None
+        except Exception as e:
+            print(f"分析出錯: {e}")
+            return None
+
+class PerformanceMonitor:
+    """性能監控工具"""
+    
+    def __init__(self):
+        self.timing_data = {}
+        self.start_times = {}
+    
+    def start_timer(self, operation: str):
+        """開始計時"""
+        import time
+        self.start_times[operation] = time.time()
+    
+    def end_timer(self, operation: str):
+        """結束計時"""
+        import time
+        if operation in self.start_times:
+            elapsed = time.time() - self.start_times[operation]
+            
+            if operation not in self.timing_data:
+                self.timing_data[operation] = []
+            
+            self.timing_data[operation].append(elapsed)
+            print(f"{operation}: {elapsed:.3f}秒")
+            
+            del self.start_times[operation]
+            return elapsed
+        return None
+    
+    def get_performance_report(self):
+        """獲取性能報告"""
+        print("\n=== 性能報告 ===")
+        for operation, times in self.timing_data.items():
+            avg_time = sum(times) / len(times)
+            min_time = min(times)
+            max_time = max(times)
+            
+            print(f"{operation}:")
+            print(f"  平均: {avg_time:.3f}秒")
+            print(f"  最快: {min_time:.3f}秒") 
+            print(f"  最慢: {max_time:.3f}秒")
+            print(f"  執行次數: {len(times)}")
+
+def run_debug_tools():
+    """運行調試工具選單"""
+    print("=== Unlight Bot 調試工具 ===")
+    print("1. 座標調整工具")
+    print("2. 模板創建工具")
+    print("3. 日誌分析工具")
+    print("4. 性能監控測試")
+    print("0. 返回主選單")
+    
+    choice = input("請選擇工具 (0-4): ").strip()
+    
+    if choice == '1':
+        print("啟動座標調整工具...")
+        helper = CoordinateHelper()
+        helper.run()
+        
+    elif choice == '2':
+        print("啟動模板創建工具...")
+        creator = TemplateCreator()
+        creator.interactive_template_creation()
+        
+    elif choice == '3':
+        print("啟動日誌分析工具...")
+        analyzer = LogAnalyzer()
+        analyzer.analyze_scan_results()
+        
+    elif choice == '4':
+        print("性能監控測試...")
+        monitor = PerformanceMonitor()
+        
+        # 示例性能測試
+        monitor.start_timer("截圖測試")
+        pyautogui.screenshot()
+        monitor.end_timer("截圖測試")
+        
+        monitor.get_performance_report()
+        
+    elif choice == '0':
+        return
+    else:
+        print("無效選擇")
+
 if __name__ == "__main__":
-    bot = UnlightBot()
-    
-    # 手動執行單次操作（使用配置文件）
-    # bot.execute_turn()
-    
-    # 手動執行單次操作（指定目標）
-    # bot.execute_turn(CardSymbol.MOVE, 3)
-    
-    # 開始自動遊戲（使用配置文件）
-    # bot.run_auto_play()
-    
-    # 測試掃描手牌
-    cards = bot.scan_hand_cards()
-    for i, card in enumerate(cards):
-        print(f"卡牌 {i+1}: 位置{card.position}, 中央{card.center_position}")
-        print(f"  正面: {card.top_symbol.value}({card.top_value})")
-        print(f"  背面: {card.bottom_symbol.value}({card.bottom_value})")
-        print(f"  當前: {card.get_current_symbol().value}({card.get_current_value()})")
-    
-    # 顯示當前配置
-    print("\n當前階段需求配置:")
-    for phase, requirements in bot.phase_requirements.items():
-        print(f"{phase.value}: {[(r[0].value, r[1]) for r in requirements]}")
+    run_debug_tools()

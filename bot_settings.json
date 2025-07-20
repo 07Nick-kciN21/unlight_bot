@@ -1,0 +1,13 @@
+{
+  "hand_area": {
+    "x": 1000,
+    "y": 600,
+    "width": 900,
+    "height": 400
+  },
+  "card_settings": {
+    "width": 80,
+    "height": 120,
+    "spacing": 90
+  }
+}
